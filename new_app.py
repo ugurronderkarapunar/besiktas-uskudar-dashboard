@@ -36,6 +36,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ---------- CSS (okunurluk garantili) ----------
 st.markdown(
     """
     <style>
@@ -50,7 +51,7 @@ st.markdown(
     .ozet-kutu {
         background: #fff3cd; border-left: 5px solid #e63946;
         padding: 1rem 1.2rem; border-radius: 8px; font-size: 1.05rem;
-        line-height: 1.6; color: #222222;
+        line-height: 1.6; color: #222;
     }
     .guven-iyi { color: #2d6a4f; font-weight: 600; }
     .guven-orta { color: #b8860b; font-weight: 600; }
@@ -58,12 +59,12 @@ st.markdown(
     .anlam-kutu {
         background: #e8f4fd; border-left: 5px solid #457b9d;
         padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.5rem 0;
-        color: #222222;
+        color: #222;
     }
     .oneri-kutu {
         background: #e8f5e9; border-left: 5px solid #2d6a4f;
         padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.5rem 0;
-        color: #222222;
+        color: #222;
     }
     </style>
     """,
@@ -109,6 +110,8 @@ sayfa = st.sidebar.radio(
         "🎯 Sefer Tahmini (Saat X'e kaç yolcu?)",
         "🕐 Tarife Önerisi",
         "✅ Güvenilirlik Raporu",
+        "🔮 What-If Analizi",        # Yeni
+        "🗺️ Rota Haritası",          # Yeni
     ],
     label_visibility="collapsed",
 )
@@ -119,7 +122,7 @@ st.sidebar.metric("Toplam Kayıt", f"{ozet['toplam_kayit']:,}")
 st.sidebar.metric("Analiz Günü", ozet["tarih_baslangic"])
 st.sidebar.caption(f"Beşiktaş→Üsküdar: {ozet['bes_usk']:,} | Üsküdar→Beşiktaş: {ozet['usk_bes']:,}")
 
-# --- Sayfalar (tümü güvenli hale getirildi) ---
+# --- Sayfalar (genişletilmiş) ---
 try:
     if sayfa == "📋 Yönetici Brifingi":
         st.markdown('<p class="main-title">Yönetici Brifingi — Öne Çıkan Bulgular</p>', unsafe_allow_html=True)
@@ -577,6 +580,131 @@ try:
                 f"Veri yalnızca **{ozet['tarih_baslangic']}** tarihini kapsıyor. "
                 "Daha güvenilir tahmin için en az 4–8 haftalık veri önerilir."
             )
+
+    elif sayfa == "🔮 What-If Analizi":
+        st.markdown('<p class="main-title">What-If Senaryoları</p>', unsafe_allow_html=True)
+        st.caption("Sefer sıklığındaki değişimin bekleme süresine ve yolcu/sefere etkisi")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            yon_label = st.selectbox("Yön", ["Beşiktaş → Üsküdar", "Üsküdar → Beşiktaş"], key="whatif_yon")
+            yon = YON_BES_USK if "Üsküdar" in yon_label.split("→")[1] else YON_USK_BES
+        with c2:
+            saat = st.slider("Saat", 0, 23, 8, key="whatif_saat")
+
+        # Mevcut tarife önerisinden saatlik sefer sayısını alalım
+        tarife = tarife_onerisi(df)
+        tsub = tarife[(tarife["yon"] == yon_label) & (tarife["saat_int"] == saat)]
+
+        if tsub.empty:
+            st.warning("Bu saat için tarife verisi bulunamadı.")
+        else:
+            base_sefer = int(tsub.iloc[0]["saatte_sefer"])
+            saatlik_talep = int(tsub.iloc[0]["talep"])
+
+            st.markdown(f"**Mevcut durum:** Saatte **{base_sefer}** sefer, toplam **{saatlik_talep}** yolcu")
+
+            # Kullanıcıdan yüzde değişim iste
+            degisim = st.slider("Sefer sayısındaki değişim (%)", -50, 100, 0, 10, key="whatif_pct")
+            yeni_sefer = max(1, round(base_sefer * (1 + degisim / 100)))
+
+            # Yeni durum hesapla
+            headway_min = 60 / yeni_sefer               # dakika cinsinden sefer aralığı
+            ortalama_bekleme = headway_min / 2          # basit kuyruk modeli
+            yolcu_per_sefer = round(saatlik_talep / yeni_sefer)
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Yeni Sefer Sayısı", f"{yeni_sefer}")
+            with col2:
+                st.metric("Ortalama Bekleme Süresi (tahmini)", f"{ortalama_bekleme:.1f} dk",
+                          delta=f"{ortalama_bekleme - (60/base_sefer)/2:.1f} dk")
+            with col3:
+                st.metric("Sefer Başına Yolcu", f"{yolcu_per_sefer}",
+                          delta=f"{yolcu_per_sefer - round(saatlik_talep/base_sefer)}")
+
+            st.markdown("---")
+            st.caption(
+                "Not: Bekleme süresi, yolcuların rastgele geldiği ve seferlerin eşit aralıklı olduğu varsayımıyla "
+                "ortalama bekleme = sefer aralığı / 2 olarak hesaplanmıştır. Gerçek değerler farklılık gösterebilir."
+            )
+
+    elif sayfa == "🗺️ Rota Haritası":
+        st.markdown('<p class="main-title">Vapur Hattı ve Bağlantı Haritası</p>', unsafe_allow_html=True)
+        st.caption("Beşiktaş – Üsküdar arası feribot güzergâhı")
+
+        # Koordinatlar (yaklaşık)
+        besiktas_lat, besiktas_lon = 41.0441, 29.0063
+        uskudar_lat, uskudar_lon = 41.0258, 29.0156
+
+        # Harita oluştur
+        fig = go.Figure()
+
+        # Vapur rotası çizgisi
+        fig.add_trace(go.Scattermapbox(
+            lon=[besiktas_lon, uskudar_lon],
+            lat=[besiktas_lat, uskudar_lat],
+            mode='lines',
+            line=dict(width=4, color='#1d3557'),
+            name='Vapur Hattı'
+        ))
+
+        # Beşiktaş iskelesi
+        fig.add_trace(go.Scattermapbox(
+            lon=[besiktas_lon],
+            lat=[besiktas_lat],
+            mode='markers+text',
+            marker=dict(size=14, color='#e63946'),
+            text=['Beşiktaş'],
+            textposition='top right',
+            name='Beşiktaş İskelesi'
+        ))
+
+        # Üsküdar iskelesi
+        fig.add_trace(go.Scattermapbox(
+            lon=[uskudar_lon],
+            lat=[uskudar_lat],
+            mode='markers+text',
+            marker=dict(size=14, color='#457b9d'),
+            text=['Üsküdar'],
+            textposition='top left',
+            name='Üsküdar İskelesi'
+        ))
+
+        # Önemli aktarma noktalarını da haritaya ekleyelim (Marmaray, Metro vb.)
+        # Örnek: Marmaray Üsküdar istasyonu yakını
+        marmaray_lat, marmaray_lon = 41.0250, 29.0150
+        fig.add_trace(go.Scattermapbox(
+            lon=[marmaray_lon],
+            lat=[marmaray_lat],
+            mode='markers',
+            marker=dict(size=8, color='#ffa500', symbol='triangle'),
+            name='Marmaray Üsküdar'
+        ))
+
+        # Harita düzeni
+        fig.update_layout(
+            mapbox=dict(
+                style='open-street-map',
+                center=dict(lat=(besiktas_lat + uskudar_lat) / 2,
+                            lon=(besiktas_lon + uskudar_lon) / 2),
+                zoom=12
+            ),
+            margin=dict(l=0, r=0, t=0, b=0),
+            height=550,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown(
+            '<div class="anlam-kutu"><b>Harita hakkında:</b><br>'
+            "Haritada Beşiktaş ve Üsküdar iskeleleri ile vapur rotası gösterilmektedir. "
+            "Turuncu üçgen Marmaray Üsküdar istasyonunu işaret eder. "
+            "Entegrasyon planlaması için kritik bir aktarma noktasıdır.</div>",
+            unsafe_allow_html=True,
+        )
 
 except Exception as e:
     st.error(f"Bir hata oluştu: {str(e)}")
