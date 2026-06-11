@@ -19,8 +19,12 @@ Bu repo Streamlit Community Cloud ile deploy edilebilir. Ana dosya: `app.py`
 
 ## Sayfalar
 
-- **Genel Özet** — KPI ve yönetici özet bulguları
-- **Yolcu Nereden Geliyor?** — Kaynak hat analizi
+- **Yönetici Brifingi** — Bulgu + ne anlama geliyor + operasyonel öneri
+- **Genel Özet** — KPI ve özet bulgular
+- **Yolcu Nereden Geliyor?** — Kaynak hat + saat×hat ısı haritası
+- **Yolculuk Zinciri** — Önceki hat → Vapur → Sonraki hat
+- **Bekleme Süresi** — İskelede bekleme analizi
+- **Yolcu Profili** — Kart tipi, aktarma, gidiş-dönüş
 - **Zaman Serisi** — 15 dk'lık talep deseni
 - **Sefer Tahmini** — Ek sefer başına tahmini yolcu
 - **Tarife Önerisi** — Yoğunluğa göre sefer sıklığı

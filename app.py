@@ -10,14 +10,22 @@ import streamlit as st
 from data_service import (
     YON_BES_USK,
     YON_USK_BES,
+    aktarma_dagilimi,
+    bekleme_analizi,
+    gidis_donus_ozet,
     guvenilirlik_raporu,
+    kart_tipi_dagilimi,
+    kart_tipi_saatlik,
     kaynak_hatlar,
+    koridor_rotalari,
     load_data,
     karar_ozet_cumlesi,
+    saat_kaynak_isi,
     saatlik_seri,
     tahmin_sefer_yolcu,
     tarife_onerisi,
     veri_ozeti,
+    yonetici_bulgular,
     zaman_serisi_ozet,
 )
 
@@ -47,10 +55,33 @@ st.markdown(
     .guven-iyi { color: #2d6a4f; font-weight: 600; }
     .guven-orta { color: #e9c46a; font-weight: 600; }
     .guven-sinirli { color: #e63946; font-weight: 600; }
+    .anlam-kutu {
+        background: #e8f4fd; border-left: 5px solid #457b9d;
+        padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.5rem 0;
+    }
+    .oneri-kutu {
+        background: #e8f5e9; border-left: 5px solid #2d6a4f;
+        padding: 0.9rem 1.1rem; border-radius: 8px; margin: 0.5rem 0;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+def bulgu_karti(b: dict) -> None:
+    """Yönetici brifingi kartı: bulgu + sade açıklama + öneri."""
+    st.markdown(f"#### {b['baslik']}")
+    st.markdown(f'<div class="ozet-kutu"><b>Bulgumuz:</b> {b["bulgu"]}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>{b["anlam"]}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="oneri-kutu"><b>Operasyonel öneri:</b> {b["oneri"]}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("")
 
 
 @st.cache_data(show_spinner="Veri yükleniyor...")
@@ -66,8 +97,12 @@ st.sidebar.markdown("## ⛴️ Menü")
 sayfa = st.sidebar.radio(
     "Sayfa seçin",
     [
+        "📋 Yönetici Brifingi",
         "🏠 Genel Özet",
         "📍 Yolcu Nereden Geliyor?",
+        "🔗 Yolculuk Zinciri",
+        "⏱️ Bekleme Süresi",
+        "👥 Yolcu Profili",
         "📈 Zaman Serisi Analizi",
         "🎯 Sefer Tahmini (Saat X'e kaç yolcu?)",
         "🕐 Tarife Önerisi",
@@ -83,7 +118,17 @@ st.sidebar.metric("Analiz Günü", ozet["tarih_baslangic"])
 st.sidebar.caption(f"Beşiktaş→Üsküdar: {ozet['bes_usk']:,} | Üsküdar→Beşiktaş: {ozet['usk_bes']:,}")
 
 # --- Sayfalar ---
-if sayfa == "🏠 Genel Özet":
+if sayfa == "📋 Yönetici Brifingi":
+    st.markdown('<p class="main-title">Yönetici Brifingi — Öne Çıkan Bulgular</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="sub-title">Her bulgu: veri → ne anlama geliyor → ne yapılmalı</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("")
+    for b in yonetici_bulgular(df):
+        bulgu_karti(b)
+
+elif sayfa == "🏠 Genel Özet":
     st.markdown('<p class="main-title">Beşiktaş – Üsküdar Vapur Hattı Yönetici Özeti</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-title">Tek günlük yolcu hareket verisine dayalı karar destek paneli</p>', unsafe_allow_html=True)
     st.markdown("")
@@ -171,6 +216,204 @@ elif sayfa == "📍 Yolcu Nereden Geliyor?":
         st.info(
             f"**En yoğun saat:** {int(peak['saat']):02d}:00 — {int(peak['yolcu']):,} yolcu\n\n"
             f"**1. kaynak hat:** {kaynak.iloc[0]['onceki_hat']} (%{kaynak.iloc[0]['yuzde']})"
+        )
+
+    st.markdown("#### Saat × Kaynak Hat Isı Haritası")
+    st.caption("Hangi saatte hangi hat en çok yolcu getiriyor — koyu renk = daha yoğun")
+    isi = saat_kaynak_isi(df, yon, 10)
+    fig_isi = px.imshow(
+        isi.values,
+        x=[f"{h:02d}" for h in range(24)],
+        y=isi.index.tolist(),
+        labels=dict(x="Saat", y="Önceki Hat", color="Yolcu"),
+        color_continuous_scale="YlOrRd",
+        aspect="auto",
+    )
+    fig_isi.update_layout(template="plotly_white", height=420)
+    st.plotly_chart(fig_isi, use_container_width=True)
+    st.markdown(
+        '<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>'
+        "Tek bakışta hangi hattın hangi saatte vapur talebini beslediğini görürsünüz. "
+        "Örneğin sabah koyu bir kare, o saatte o hattın vapur için kritik olduğunu gösterir."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+elif sayfa == "🔗 Yolculuk Zinciri":
+    st.markdown('<p class="main-title">Yolculuk Zinciri Analizi</p>', unsafe_allow_html=True)
+    st.caption("Önceki hat → Vapur → Sonraki hat: yolcu tam rotası")
+
+    yon_sec = st.selectbox(
+        "Yön",
+        [("Beşiktaş → Üsküdar", YON_BES_USK), ("Üsküdar → Beşiktaş", YON_USK_BES)],
+        format_func=lambda x: x[0],
+        key="koridor_yon",
+    )
+    yon = yon_sec[1]
+    koridor = koridor_rotalari(df, yon, 15)
+
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        fig = px.bar(
+            koridor, x="yolcu", y="koridor", orientation="h",
+            title=f"En Sık 15 Rota — {yon_sec[0]}",
+            labels={"koridor": "Rota", "yolcu": "Yolcu"},
+            color="yolcu", color_continuous_scale="Teal",
+        )
+        fig.update_layout(template="plotly_white", height=520, yaxis={"categoryorder": "total ascending"})
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        st.dataframe(
+            koridor[["onceki_hat", "sonraki_hat", "yolcu", "yuzde"]],
+            use_container_width=True, hide_index=True,
+        )
+
+    top = koridor.iloc[0]
+    st.markdown(
+        f'<div class="ozet-kutu"><b>En yoğun zincir:</b> {top["koridor"]} — '
+        f'{int(top["yolcu"]):,} yolcu (%{top["yuzde"]})</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>'
+        "Yolcu sadece vapura binip inmiyor; önce bir araçla geliyor, vapura biniyor, "
+        "sonra başka bir hatla devam ediyor. Vapur planı bu üçlü zincirin ortasında yer alır. "
+        "En sık rota, entegrasyon ve aktarma noktalarının önceliğini belirler."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="oneri-kutu"><b>Operasyonel öneri:</b> '
+        "En yoğun 3 koridor için aktarma saatleri ve yönlendirme tabelaları "
+        "vapur tarifesiyle uyumlu hale getirilsin."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+elif sayfa == "⏱️ Bekleme Süresi":
+    st.markdown('<p class="main-title">İskele Bekleme Süresi Analizi</p>', unsafe_allow_html=True)
+    st.caption("Önceki araçtan indikten sonra vapur gelene kadar geçen süre")
+
+    yon_sec = st.selectbox(
+        "Yön",
+        [("Beşiktaş → Üsküdar", YON_BES_USK), ("Üsküdar → Beşiktaş", YON_USK_BES)],
+        format_func=lambda x: x[0],
+        key="bekleme_yon",
+    )
+    yon = yon_sec[1]
+    bek = bekleme_analizi(df, yon)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Ortalama Bekleme", f"{bek['ortalama_dk']} dk")
+    m2.metric("Medyan Bekleme", f"{bek['medyan_dk']} dk")
+    m3.metric("15+ dk Bekleyen", f"%{bek['uzun_bekleme_yuzde']}")
+    m4.metric("30+ dk Bekleyen", f"%{bek['cok_uzun_yuzde']}")
+
+    if not bek["saatlik"].empty:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=bek["saatlik"]["saat"], y=bek["saatlik"]["yolcu"], name="Yolcu sayısı", yaxis="y2", marker_color="#a8dadc", opacity=0.5))
+        fig.add_trace(go.Scatter(x=bek["saatlik"]["saat"], y=bek["saatlik"]["ortalama"], name="Ort. bekleme (dk)", line=dict(color="#e63946", width=3)))
+        fig.update_layout(
+            title="Saatlik Ortalama Bekleme Süresi",
+            xaxis_title="Saat", yaxis_title="Bekleme (dk)",
+            yaxis2=dict(title="Yolcu", overlaying="y", side="right", showgrid=False),
+            template="plotly_white", height=420, legend=dict(orientation="h"),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown(
+        '<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>'
+        "Bekleme süresi, yolcunun önceki ulaşım aracından indikten sonra vapur gelene kadar "
+        "iskelede geçirdiği zamandır. Uzun bekleme = kalabalık iskele, kaçırılan bağlantılar ve "
+        "düşük memnuniyet. Pik saatlerde bekleme artıyorsa sefer sayısı yetersiz olabilir."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="oneri-kutu"><b>Operasyonel öneri:</b> '
+        "%15'ten fazla yolcunun 15+ dakika beklediği saatlerde sefer sıklığını artırın "
+        "veya önceki hat seferleriyle senkronizasyonu gözden geçirin."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+elif sayfa == "👥 Yolcu Profili":
+    st.markdown('<p class="main-title">Yolcu Profili Analizi</p>', unsafe_allow_html=True)
+    st.caption("Kart tipi, aktarma derinliği ve gidiş-dönüş davranışı")
+
+    tab1, tab2, tab3 = st.tabs(["Kart Tipi", "Aktarma Derinliği", "Gidiş-Dönüş"])
+
+    with tab1:
+        yon_sec = st.selectbox(
+            "Yön (kart tipi)",
+            [("Tümü", None), ("Beşiktaş → Üsküdar", YON_BES_USK), ("Üsküdar → Beşiktaş", YON_USK_BES)],
+            format_func=lambda x: x[0],
+            key="kart_yon",
+        )
+        kart = kart_tipi_dagilimi(df, yon_sec[1])
+        c1, c2 = st.columns(2)
+        with c1:
+            fig = px.pie(kart, values="yolcu", names="kart_tipi", title="Kart Tipi Dağılımı", hole=0.4)
+            fig.update_layout(template="plotly_white", height=380)
+            st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            st.dataframe(kart, use_container_width=True, hide_index=True)
+
+        if yon_sec[1]:
+            ks = kart_tipi_saatlik(df, yon_sec[1])
+            fig2 = px.line(ks, x="saat", y="yolcu", color="kart_tipi", markers=True, title="Saatlik Kart Tipi Profili")
+            fig2.update_layout(template="plotly_white", height=380)
+            st.plotly_chart(fig2, use_container_width=True)
+
+        st.markdown(
+            '<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>'
+            "Öğrenci, tam bilet veya abonman oranı; hangi yolcu grubunun hangi saatte "
+            "vapur kullandığını gösterir. Örneğin sabah öğrenci yoğunluğu yüksekse, "
+            "o saatlerde kapasite ve tarife politikası buna göre şekillenmelidir."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    with tab2:
+        yon_a = st.selectbox(
+            "Yön (aktarma)",
+            [("Beşiktaş → Üsküdar", YON_BES_USK), ("Üsküdar → Beşiktaş", YON_USK_BES)],
+            format_func=lambda x: x[0],
+            key="aktarma_yon",
+        )
+        akt = aktarma_dagilimi(df, yon_a[1])
+        fig = px.bar(akt, x="aktarma_grup", y="yolcu", text="yuzde", title="Vapura Gelmeden Önce Aktarma Sayısı")
+        fig.update_traces(texttemplate="%{text}%", textposition="outside")
+        fig.update_layout(template="plotly_white", height=380)
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown(
+            '<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>'
+            "Doğrudan gelen yolcu tek araçla iskeleye ulaşmış demektir. "
+            "1 veya 2+ aktarma yapanlar uzak koridorlardan geliyor; vapur kaçırma riski "
+            "ve bağlantı süresi planlaması bu grup için kritiktir."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    with tab3:
+        gd = gidis_donus_ozet(df)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Benzersiz Kart", f"{gd['toplam_benzersiz_kart']:,}")
+        c2.metric("Gidiş-Dönüş Yapan", f"{gd['gidis_donus_kart']:,}")
+        c3.metric("Gidiş-Dönüş Oranı", f"%{gd['gidis_donus_yuzde']}")
+        st.markdown(
+            '<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>'
+            "Aynı gün hem Beşiktaş→Üsküdar hem Üsküdar→Beşiktaş yapan yolcular "
+            "(pendler / işe gidip dönenler). Sabah ve akşam pik saatleri bu grubun "
+            "gidiş ve dönüş ihtiyacını yansıtır; iki yön birbirinden bağımsız planlanmamalıdır."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="oneri-kutu"><b>Operasyonel öneri:</b> '
+            "Sabah Beşiktaş ve akşam Üsküdar yoğunluklarını çift yönlü talep olarak birlikte planlayın."
+            "</div>",
+            unsafe_allow_html=True,
         )
 
 elif sayfa == "📈 Zaman Serisi Analizi":

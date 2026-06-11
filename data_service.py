@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import time as dt_time
 from pathlib import Path
 
 import numpy as np
@@ -56,9 +57,11 @@ def load_data(path: Path | None = None) -> pd.DataFrame:
     df.columns = [str(c).strip() for c in df.columns]
     rename = {
         "yön": "yon",
+        "anonim_kart_no": "kart_no",
         "saat_2.sıra": "saat_vapur",
         "saat_1.sıra": "saat_onceki",
         "onceki_hat_adi_ok_1.sıra": "onceki_hat",
+        "sonraki_hat_adi_ok_3.sıra": "sonraki_hat",
         "onceki_operator_adi": "onceki_operator",
         "onceki_operator_grubu": "onceki_operator_grubu",
         "kart_tipi": "kart_tipi",
@@ -66,6 +69,7 @@ def load_data(path: Path | None = None) -> pd.DataFrame:
         "merkez_trn_ts": "islem_zamani",
         "merkez_hat_adi": "vapur_hatti",
         "merkez_aktarma_no": "aktarma_sayisi",
+        "onceki_aktarma_no": "onceki_aktarma",
     }
     for old, new in rename.items():
         if old in df.columns:
@@ -77,8 +81,40 @@ def load_data(path: Path | None = None) -> pd.DataFrame:
     df["dakika"] = df["islem_zamani"].dt.minute
     df["dakika_toplam"] = df["saat"] * 60 + df["dakika"]
     df["saat_dakika"] = df["islem_zamani"].dt.strftime("%H:%M")
-    df["onceki_hat"] = df["onceki_hat"].fillna("BİLİNMİYOR").astype(str).str.strip()
-    df["onceki_hat"] = df["onceki_hat"].replace({"": "BİLİNMİYOR", "nan": "BİLİNMİYOR"})
+    for col in ("onceki_hat", "sonraki_hat"):
+        if col in df.columns:
+            df[col] = df[col].fillna("BİLİNMİYOR").astype(str).str.strip()
+            df[col] = df[col].replace({"": "BİLİNMİYOR", "nan": "BİLİNMİYOR"})
+        else:
+            df[col] = "BİLİNMİYOR"
+
+    df["kart_tipi"] = df.get("kart_tipi", pd.Series(dtype=str)).fillna("Belirtilmemiş").astype(str).str.strip()
+    df["kart_tipi"] = df["kart_tipi"].replace({"": "Belirtilmemiş", "nan": "Belirtilmemiş", "boş": "Belirtilmemiş"})
+
+    def _bekleme_dakika(val) -> float:
+        if pd.isna(val):
+            return np.nan
+        if isinstance(val, dt_time):
+            return val.hour * 60 + val.minute + val.second / 60
+        td = pd.to_timedelta(val, errors="coerce")
+        if pd.notna(td):
+            return td.total_seconds() / 60
+        s = str(val).strip()
+        if not s or s.lower() in ("nan", "nat"):
+            return np.nan
+        parts = s.split(":")
+        if len(parts) >= 2:
+            try:
+                h, m = int(parts[0]), int(parts[1])
+                sec = int(float(parts[2])) if len(parts) > 2 else 0
+                return h * 60 + m + sec / 60
+            except ValueError:
+                return np.nan
+        return np.nan
+
+    df["bekleme_dk"] = df["bekleme_suresi"].apply(_bekleme_dakika)
+
+    df["onceki_aktarma"] = pd.to_numeric(df.get("onceki_aktarma", 0), errors="coerce").fillna(0).astype(int)
     df["yon_etiket"] = df["yon"].map(YON_ETIKET)
     return df
 
@@ -273,3 +309,206 @@ def tarife_onerisi(df: pd.DataFrame) -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _filtre_yon(df: pd.DataFrame, yon: str | None) -> pd.DataFrame:
+    return df if yon is None else df[df["yon"] == yon]
+
+
+def bekleme_analizi(df: pd.DataFrame, yon: str | None = None) -> dict:
+    sub = _filtre_yon(df, yon).dropna(subset=["bekleme_dk"])
+    sub = sub[sub["bekleme_dk"] >= 0]
+    if sub.empty:
+        return {"ortalama_dk": 0, "medyan_dk": 0, "uzun_bekleme_yuzde": 0, "saatlik": pd.DataFrame()}
+
+    saatlik = (
+        sub.groupby("saat")["bekleme_dk"]
+        .agg(ortalama="mean", medyan="median", yolcu="count")
+        .reset_index()
+        .round(1)
+    )
+    uzun = (sub["bekleme_dk"] >= 15).mean() * 100
+    return {
+        "ortalama_dk": round(sub["bekleme_dk"].mean(), 1),
+        "medyan_dk": round(sub["bekleme_dk"].median(), 1),
+        "uzun_bekleme_yuzde": round(uzun, 1),
+        "cok_uzun_yuzde": round((sub["bekleme_dk"] >= 30).mean() * 100, 1),
+        "saatlik": saatlik,
+        "toplam": len(sub),
+    }
+
+
+def koridor_rotalari(df: pd.DataFrame, yon: str, top_n: int = 15) -> pd.DataFrame:
+    sub = df[df["yon"] == yon]
+    t = (
+        sub.groupby(["onceki_hat", "sonraki_hat"])
+        .size()
+        .sort_values(ascending=False)
+        .reset_index(name="yolcu")
+    )
+    t["koridor"] = t["onceki_hat"] + " → Vapur → " + t["sonraki_hat"]
+    t["yuzde"] = (t["yolcu"] / len(sub) * 100).round(1)
+    return t.head(top_n)
+
+
+def kart_tipi_dagilimi(df: pd.DataFrame, yon: str | None = None) -> pd.DataFrame:
+    sub = _filtre_yon(df, yon)
+    t = sub.groupby("kart_tipi").size().sort_values(ascending=False).reset_index(name="yolcu")
+    t["yuzde"] = (t["yolcu"] / t["yolcu"].sum() * 100).round(1)
+    return t
+
+
+def kart_tipi_saatlik(df: pd.DataFrame, yon: str, top_tipler: int = 5) -> pd.DataFrame:
+    sub = df[df["yon"] == yon]
+    top = kart_tipi_dagilimi(sub).head(top_tipler)["kart_tipi"].tolist()
+    sub = sub[sub["kart_tipi"].isin(top)]
+    p = sub.groupby(["saat", "kart_tipi"]).size().reset_index(name="yolcu")
+    return p
+
+
+def aktarma_dagilimi(df: pd.DataFrame, yon: str | None = None) -> pd.DataFrame:
+    sub = _filtre_yon(df, yon).copy()
+    sub["aktarma_grup"] = sub["onceki_aktarma"].apply(
+        lambda x: "Doğrudan (0 aktarma)" if x == 0 else "1 aktarma" if x == 1 else "2+ aktarma"
+    )
+    t = sub.groupby("aktarma_grup").size().reset_index(name="yolcu")
+    t["yuzde"] = (t["yolcu"] / t["yolcu"].sum() * 100).round(1)
+    return t
+
+
+def gidis_donus_ozet(df: pd.DataFrame) -> dict:
+    kart_yon = df.groupby("kart_no")["yon"].apply(set)
+    cift = kart_yon[kart_yon.apply(lambda s: YON_BES_USK in s and YON_USK_BES in s)]
+    toplam_kart = df["kart_no"].nunique()
+    cift_say = len(cift)
+    return {
+        "toplam_benzersiz_kart": toplam_kart,
+        "gidis_donus_kart": cift_say,
+        "gidis_donus_yuzde": round(cift_say / toplam_kart * 100, 1) if toplam_kart else 0,
+        "tek_yon_kart": toplam_kart - cift_say,
+    }
+
+
+def saat_kaynak_isi(df: pd.DataFrame, yon: str, top_hats: int = 10) -> pd.DataFrame:
+    sub = df[df["yon"] == yon]
+    top = kaynak_hatlar(sub, yon, top_hats)["onceki_hat"].tolist()
+    sub = sub[sub["onceki_hat"].isin(top)]
+    p = sub.pivot_table(index="onceki_hat", columns="saat", values="kart_no", aggfunc="count", fill_value=0)
+    p = p.reindex(columns=range(24), fill_value=0)
+    return p
+
+
+def yonetici_bulgular(df: pd.DataFrame) -> list[dict]:
+    """Yönetici brifingi için otomatik bulgular ve sade dilde açıklamalar."""
+    bulgular = []
+    bes_peak = saatlik_seri(df, YON_USK_BES).loc[saatlik_seri(df, YON_USK_BES)["yolcu"].idxmax()]
+    usk_peak = saatlik_seri(df, YON_BES_USK).loc[saatlik_seri(df, YON_BES_USK)["yolcu"].idxmax()]
+    bes_kaynak = kaynak_hatlar(df, YON_USK_BES, 1).iloc[0]
+    usk_kaynak = kaynak_hatlar(df, YON_BES_USK, 1).iloc[0]
+
+    bulgular.append({
+        "baslik": "Beşiktaş sabah yoğunluğu Marmaray kaynaklı",
+        "bulgu": (
+            f"Beşiktaş'a gelen yolcuların %{bes_kaynak['yuzde']}'i "
+            f"{bes_kaynak['onceki_hat']} hattından geliyor. Pik saat {int(bes_peak['saat']):02d}:00 "
+            f"({int(bes_peak['yolcu']):,} yolcu)."
+        ),
+        "anlam": (
+            "Sabah Beşiktaş iskelesine gelen yolcuların büyük bölümü Anadolu yakasından Marmaray ile geliyor. "
+            "Vapur tek başına değil; demiryolu + vapur birlikte planlanmalı."
+        ),
+        "oneri": "07:30–08:30 arası Marmaray–vapur aktarma saatlerini senkronize edin.",
+    })
+
+    bulgular.append({
+        "baslik": "Üsküdar akşam yoğunluğu dağınık Avrupa beslemesi",
+        "bulgu": (
+            f"Üsküdar'a gelenlerde 1. kaynak {usk_kaynak['onceki_hat']} (%{usk_kaynak['yuzde']}), "
+            f"pik saat {int(usk_peak['saat']):02d}:00 ({int(usk_peak['yolcu']):,} yolcu)."
+        ),
+        "anlam": (
+            "Akşam Üsküdar talebi tek bir hattan değil; Beşiktaş otobüsleri ve Taksim hatlarından besleniyor. "
+            "Sadece vapur değil, karşı yakadaki otobüs seferleri de koordinasyon gerektirir."
+        ),
+        "oneri": "17:00–19:00 bandında Avrupa yakası besleyici hatlarla ortak tarife gözden geçirilsin.",
+    })
+
+    bekleme_bes = bekleme_analizi(df, YON_USK_BES)
+    bulgular.append({
+        "baslik": "İskele bekleme süresi",
+        "bulgu": (
+            f"Beşiktaş yönünde ortalama bekleme {bekleme_bes['ortalama_dk']} dk, "
+            f"medyan {bekleme_bes['medyan_dk']} dk. "
+            f"Yolcuların %{bekleme_bes['uzun_bekleme_yuzde']}'i 15 dakikadan fazla bekliyor."
+        ),
+        "anlam": (
+            "Önceki araçtan indikten sonra vapur gelene kadar geçen süre. Uzun bekleme, "
+            "yolcu memnuniyetini düşürür ve iskele kalabalığı yaratır."
+        ),
+        "oneri": "15+ dk bekleyen oranı yüksek saatlerde sefer sıklığını artırın.",
+    })
+
+    koridor = koridor_rotalari(df, YON_USK_BES, 1).iloc[0]
+    bulgular.append({
+        "baslik": "En yoğun yolculuk zinciri",
+        "bulgu": (
+            f"En sık rota: {koridor['onceki_hat']} → Vapur → {koridor['sonraki_hat']} "
+            f"({int(koridor['yolcu']):,} yolcu, %{koridor['yuzde']})."
+        ),
+        "anlam": (
+            "Yolcu sadece vapura binmiyor; önce bir hat, sonra vapur, sonra başka bir hat kullanıyor. "
+            "Ulaşım planlaması bu üçlü zincir üzerinden yapılmalı."
+        ),
+        "oneri": "Bu koridor için aktarma noktalarında bilgilendirme ve sefer uyumu güçlendirilsin.",
+    })
+
+    kart = kart_tipi_dagilimi(df, YON_USK_BES).iloc[0]
+    bulgular.append({
+        "baslik": "Yolcu profili (kart tipi)",
+        "bulgu": f"Beşiktaş yönünde en yaygın kart tipi: {kart['kart_tipi']} (%{kart['yuzde']}).",
+        "anlam": (
+            "Öğrenci, tam veya abonman yoğunluğu; tarife ve kampanya kararlarında "
+            "hangi segmentin etkileneceğini gösterir."
+        ),
+        "oneri": "Pik saatlerde baskın segmente göre kapasite ve iletişim planı yapın.",
+    })
+
+    aktarma = aktarma_dagilimi(df, YON_USK_BES)
+    dogrudan = aktarma[aktarma["aktarma_grup"].str.contains("Doğrudan")]
+    dogrudan_pct = float(dogrudan["yuzde"].iloc[0]) if not dogrudan.empty else 0
+    bulgular.append({
+        "baslik": "Aktarma derinliği",
+        "bulgu": f"Beşiktaş yönünde yolcuların %{dogrudan_pct}'i vapura doğrudan geliyor (öncesinde aktarma yok).",
+        "anlam": (
+            "Kalan kısım en az bir aktarma yapıyor; uzak koridorlardan gelen yolcu "
+            "zamanında vapur kaçırma riski taşır."
+        ),
+        "oneri": "Çok aktarmalı yolcular için aktarma sürelerini vapur tarifesiyle hizalayın.",
+    })
+
+    gd = gidis_donus_ozet(df)
+    bulgular.append({
+        "baslik": "Gidiş-dönüş yolcuları",
+        "bulgu": (
+            f"Benzersiz {gd['toplam_benzersiz_kart']:,} kartın %{gd['gidis_donus_yuzde']}'i "
+            f"aynı gün hem gidiş hem dönüş yapmış."
+        ),
+        "anlam": (
+            "Bu yolcular pendler (işe gidip dönen); sabah ve akşam sefer planı simetrik olmayabilir "
+            "ama iki yön de birbirini besler."
+        ),
+        "oneri": "Sabah Beşiktaş, akşam Üsküdar piklerini birlikte değerlendirin.",
+    })
+
+    ozet = veri_ozeti(df)
+    bulgular.append({
+        "baslik": "Veri kapsamı sınırı",
+        "bulgu": f"Analiz {ozet['tarih_baslangic']} tarihli tek günlük veriye dayanıyor ({ozet['toplam_kayit']:,} kayıt).",
+        "anlam": (
+            "Bugünkü bulgular o günün fotoğrafıdır. Tatil, hava, etkinlik ve hafta sonu farkı "
+            "henüz modele girmedi."
+        ),
+        "oneri": "4–8 haftalık veriyle hafta içi/sonu ve mevsimsel planlama yapılabilir.",
+    })
+
+    return bulgular
