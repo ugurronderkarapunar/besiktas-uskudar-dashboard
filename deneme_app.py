@@ -563,21 +563,19 @@ def koridor_kapasite(df: pd.DataFrame, kapasite: int = 600) -> pd.DataFrame:
         return pd.DataFrame(columns=["onceki_hat", "sonraki_hat", "yolcu", "koridor", "yuzde", "doluluk", "yon"])
     return pd.concat(rows, ignore_index=True)
 
+# DEĞİŞTİ: scikit-learn yerine numpy polyfit ile tahmin
 def talep_tahmin_basit(df: pd.DataFrame, yon: str) -> pd.DataFrame:
-    try:
-        from sklearn.linear_model import LinearRegression
-    except ImportError:
-        st.error("scikit-learn yüklü değil. Lütfen `pip install scikit-learn` yapın.")
-        return pd.DataFrame()
     seri = saatlik_seri(df, yon)
     if seri.empty or seri["yolcu"].sum() == 0:
         return pd.DataFrame()
-    X = seri[["saat"]].values
+    x = seri["saat"].values
     y = seri["yolcu"].values
-    model = LinearRegression()
-    model.fit(X, y)
-    tahmin = model.predict(X)
-    seri["tahmin"] = tahmin.round(0).astype(int)
+    # 3. dereceden polinom fit
+    coeffs = np.polyfit(x, y, 3)
+    poly = np.poly1d(coeffs)
+    tahmin = poly(x)
+    seri["tahmin"] = np.round(tahmin).astype(int)
+    seri["tahmin"] = seri["tahmin"].clip(lower=0)
     seri["hata"] = (seri["yolcu"] - seri["tahmin"]).abs()
     return seri
 
@@ -693,7 +691,7 @@ try:
                 color_discrete_sequence=["#457B9D", "#E63946"],
             )
             fig.update_layout(template="plotly_white", height=420)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
     elif sayfa == "📍 Yolcu Nereden Geliyor?":
         st.markdown('<p class="main-title">Yolcu Kaynak Analizi</p>', unsafe_allow_html=True)
@@ -715,10 +713,10 @@ try:
                     color="yolcu", color_continuous_scale="Blues",
                 )
                 fig.update_layout(template="plotly_white", height=520, yaxis={"categoryorder": "total ascending"})
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             with c2:
                 st.markdown("#### Tablo")
-                st.dataframe(kaynak, use_container_width=True, hide_index=True)
+                st.dataframe(kaynak, width='stretch', hide_index=True)
                 peak_seri = saatlik_seri(df, yon)
                 if not peak_seri.empty:
                     peak = peak_seri.loc[peak_seri["yolcu"].idxmax()]
@@ -740,7 +738,7 @@ try:
                     aspect="auto",
                 )
                 fig_isi.update_layout(template="plotly_white", height=420)
-                st.plotly_chart(fig_isi, use_container_width=True)
+                st.plotly_chart(fig_isi, width='stretch')
                 st.markdown(
                     '<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>'
                     "Tek bakışta hangi hattın hangi saatte vapur talebini beslediğini görürsünüz. "
@@ -775,11 +773,11 @@ try:
                     color="yolcu", color_continuous_scale="Teal",
                 )
                 fig.update_layout(template="plotly_white", height=520, yaxis={"categoryorder": "total ascending"})
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             with c2:
                 st.dataframe(
                     koridor[["onceki_hat", "sonraki_hat", "yolcu", "yuzde"]],
-                    use_container_width=True, hide_index=True,
+                    width='stretch', hide_index=True,
                 )
 
             top = koridor.iloc[0]
@@ -835,7 +833,7 @@ try:
                     yaxis2=dict(title="Yolcu", overlaying="y", side="right", showgrid=False),
                     template="plotly_white", height=420, legend=dict(orientation="h"),
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             else:
                 st.info("Bekleme süresi grafiği için yeterli veri yok.")
 
@@ -872,16 +870,16 @@ try:
                 with c1:
                     fig = px.pie(kart, values="yolcu", names="kart_tipi", title="Kart Tipi Dağılımı", hole=0.4)
                     fig.update_layout(template="plotly_white", height=380)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 with c2:
-                    st.dataframe(kart, use_container_width=True, hide_index=True)
+                    st.dataframe(kart, width='stretch', hide_index=True)
 
                 if yon_sec[1]:
                     ks = kart_tipi_saatlik(df, yon_sec[1])
                     if ks is not None and not ks.empty:
                         fig2 = px.line(ks, x="saat", y="yolcu", color="kart_tipi", markers=True, title="Saatlik Kart Tipi Profili")
                         fig2.update_layout(template="plotly_white", height=380)
-                        st.plotly_chart(fig2, use_container_width=True)
+                        st.plotly_chart(fig2, width='stretch')
             else:
                 st.info("Kart tipi verisi yok.")
 
@@ -905,7 +903,7 @@ try:
                 fig = px.bar(akt, x="aktarma_grup", y="yolcu", text="yuzde", title="Vapura Gelmeden Önce Aktarma Sayısı")
                 fig.update_traces(texttemplate="%{text}%", textposition="outside")
                 fig.update_layout(template="plotly_white", height=380)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             else:
                 st.info("Aktarma verisi yok.")
             st.markdown(
@@ -957,12 +955,12 @@ try:
                 template="plotly_white", height=450,
                 xaxis=dict(tickangle=45, nticks=24),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             st.markdown("#### Saatlik Özet Tablo")
             saatlik = saatlik_seri(df, yon)
             if saatlik is not None and not saatlik.empty:
-                st.dataframe(saatlik, use_container_width=True, hide_index=True)
+                st.dataframe(saatlik, width='stretch', hide_index=True)
         else:
             st.warning("Zaman serisi verisi oluşturulamadı.")
 
@@ -1027,7 +1025,7 @@ try:
                 fig.add_trace(go.Scatter(x=kdf["saat"], y=kdf["ust"], mode="lines", name="Üst sınır", line=dict(dash="dot", color="#aaa")))
                 fig.add_trace(go.Scatter(x=kdf["saat"], y=kdf["alt"], mode="lines", name="Alt sınır", fill="tonexty", line=dict(dash="dot", color="#aaa")))
                 fig.update_layout(title="24 Saat Sefer Başına Tahmini Yolcu", template="plotly_white", height=380, xaxis_tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
         else:
             st.error("Sefer tahmini sonucu alınamadı.")
 
@@ -1045,11 +1043,11 @@ try:
                 text="onerilen_frekans",
             )
             fig.update_layout(template="plotly_white", height=420, xaxis_tickangle=45)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             st.dataframe(
                 tsub[["saat", "talep", "talep_katsayisi", "onerilen_frekans", "saatte_sefer", "sefer_basina_yolcu"]],
-                use_container_width=True, hide_index=True,
+                width='stretch', hide_index=True,
             )
 
             yogun = tsub.nlargest(3, "talep")
@@ -1149,11 +1147,9 @@ try:
         fig.add_trace(go.Scattermapbox(
             lon=[uskudar_lon], lat=[uskudar_lat], mode='markers+text',
             marker=dict(size=14, color='#457b9d'), text=['Üsküdar'], textposition='top left', name='Üsküdar'))
-        # Marmaray
         fig.add_trace(go.Scattermapbox(
             lon=[29.0150], lat=[41.0250], mode='markers',
             marker=dict(size=8, color='#ffa500', symbol='triangle'), name='Marmaray Üsküdar'))
-        # Kaynak hatlar
         kaynak_df = kaynak_hatlar(df, YON_USK_BES, 5)
         hat_koord = {
             "Marmaray": (41.0250, 29.0150),
@@ -1175,7 +1171,7 @@ try:
             mapbox=dict(style='open-street-map', center=dict(lat=41.03495, lon=29.01095), zoom=12),
             margin=dict(l=0, r=0, t=0, b=0), height=550,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         st.markdown('<div class="anlam-kutu"><b>Harita hakkında:</b> Yeşil noktalar en yoğun kaynak hatlarını gösterir.</div>', unsafe_allow_html=True)
 
     elif sayfa == "🙂 Yolcu Memnuniyet Endeksi":
@@ -1191,8 +1187,8 @@ try:
                          color_continuous_scale="RdYlGn", range_color=[0, 100],
                          title=f"Memnuniyet Endeksi – {yon_sec}")
             fig.update_layout(template="plotly_white", height=400)
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(veri, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
+            st.dataframe(veri, width='stretch')
             csv = veri.to_csv(index=False).encode('utf-8')
             st.download_button("📥 CSV İndir", csv, "memnuniyet.csv", "text/csv")
 
@@ -1210,8 +1206,8 @@ try:
             fig.add_hline(y=veri["esik_ust"].iloc[0], line_dash="dash", line_color="red", annotation_text="Üst eşik")
             fig.add_hline(y=veri["esik_alt"].iloc[0], line_dash="dash", line_color="blue", annotation_text="Alt eşik")
             fig.update_layout(title=f"Anomali Tespiti – {yon_sec}", template="plotly_white", height=400)
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(veri[veri["anomali"] != "Normal"], use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
+            st.dataframe(veri[veri["anomali"] != "Normal"], width='stretch')
             csv = veri.to_csv(index=False).encode('utf-8')
             st.download_button("📥 CSV İndir", csv, "anomali.csv", "text/csv")
 
@@ -1226,8 +1222,8 @@ try:
             veri = dakiklik[dakiklik["yon"] == yon_sec]
             fig = px.histogram(veri, x="gecikme_dk", nbins=20, title=f"Gecikme Dağılımı – {yon_sec}")
             fig.update_layout(template="plotly_white", height=400)
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(veri.groupby("saat")["gecikme_dk"].mean().reset_index(), use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
+            st.dataframe(veri.groupby("saat")["gecikme_dk"].mean().reset_index(), width='stretch')
             csv = veri.to_csv(index=False).encode('utf-8')
             st.download_button("📥 CSV İndir", csv, "dakiklik.csv", "text/csv")
 
@@ -1244,7 +1240,7 @@ try:
             fig.add_trace(go.Bar(x=veri["saat"], y=veri["yolcu_normal"], name="Normal"))
             fig.add_trace(go.Bar(x=veri["saat"], y=veri["yolcu_yagmurlu"], name="Yağmurlu"))
             fig.update_layout(title=f"Talep Değişimi – {yon_sec} (Yağış %{yagis})", barmode="group", template="plotly_white", height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             csv = veri.to_csv(index=False).encode('utf-8')
             st.download_button("📥 CSV İndir", csv, "hava_durumu.csv", "text/csv")
 
@@ -1261,50 +1257,45 @@ try:
                          title=f"Doluluk Oranları – {yon_sec}",
                          color="doluluk", color_continuous_scale="OrRd")
             fig.update_layout(template="plotly_white", height=500)
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(veri, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
+            st.dataframe(veri, width='stretch')
             csv = veri.to_csv(index=False).encode('utf-8')
             st.download_button("📥 CSV İndir", csv, "koridor_kapasite.csv", "text/csv")
 
     elif sayfa == "📥 Rapor İndirme Merkezi":
         st.markdown('<p class="main-title">Rapor İndirme Merkezi</p>', unsafe_allow_html=True)
         st.caption("Tüm önemli tabloları CSV olarak dışa aktarın.")
-        # Tarife önerisi
         tahmin_df = tarife_onerisi(df)
         if not tahmin_df.empty:
             st.download_button("📥 Tarife Önerisi CSV", tahmin_df.to_csv(index=False).encode('utf-8'), "tarife_onerisi.csv")
-        # Memnuniyet
         mem_df = memnuniyet_skoru(df)
         if not mem_df.empty:
             st.download_button("📥 Memnuniyet Skoru CSV", mem_df.to_csv(index=False).encode('utf-8'), "memnuniyet.csv")
-        # Anomali
         anom_df = anomali_tespiti(df)
         if not anom_df.empty:
             st.download_button("📥 Anomali Tespiti CSV", anom_df.to_csv(index=False).encode('utf-8'), "anomali.csv")
-        # Koridor kapasite
         kor_df = koridor_kapasite(df)
         if not kor_df.empty:
             st.download_button("📥 Koridor Kapasite CSV", kor_df.to_csv(index=False).encode('utf-8'), "koridor.csv")
-        # Kaynak hatlar
         kaynak_df = kaynak_hatlar(df, YON_USK_BES, 20)
         if not kaynak_df.empty:
             st.download_button("📥 Kaynak Hatlar CSV", kaynak_df.to_csv(index=False).encode('utf-8'), "kaynak_hatlar.csv")
 
     elif sayfa == "📈 Talep Tahmin Modeli":
         st.markdown('<p class="main-title">Basit Talep Tahmin Modeli</p>', unsafe_allow_html=True)
-        st.warning("Bu model tek günlük veri ile eğitildiği için yalnızca o günün desenini yansıtır. Gerçek kullanım için çok günlü veri gerekir.")
+        st.warning("Bu model polinom regresyonu ile çalışır, tek günlük veri ile eğitildiği için yalnızca o günün desenini yansıtır. Gerçek kullanım için çok günlü veri gerekir.")
         yon_sec = st.selectbox("Yön", ["Beşiktaş → Üsküdar", "Üsküdar → Beşiktaş"], key="ml_yon")
         yon = YON_BES_USK if "Üsküdar" in yon_sec.split("→")[1] else YON_USK_BES
         tahmin_seri = talep_tahmin_basit(df, yon)
         if tahmin_seri.empty:
-            st.warning("Tahmin yapılamadı. scikit-learn yüklü değil veya veri yetersiz.")
+            st.warning("Tahmin yapılamadı, veri yetersiz.")
         else:
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=tahmin_seri["saat"], y=tahmin_seri["yolcu"], name="Gerçek"))
             fig.add_trace(go.Scatter(x=tahmin_seri["saat"], y=tahmin_seri["tahmin"], name="Tahmin"))
             fig.update_layout(title=f"Talep Tahmini – {yon_sec}", template="plotly_white", height=400)
-            st.plotly_chart(fig, use_container_width=True)
-            st.dataframe(tahmin_seri, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
+            st.dataframe(tahmin_seri, width='stretch')
             csv = tahmin_seri.to_csv(index=False).encode('utf-8')
             st.download_button("📥 CSV İndir", csv, "talep_tahmin.csv", "text/csv")
 
