@@ -549,5 +549,5 @@ elif sayfa == "✅ Güvenilirlik Raporu":
     if ozet["gun_sayisi"] <= 1:
         st.warning(
             f"Veri yalnızca **{ozet['tarih_baslangic']}** tarihini kapsıyor. "
-            "Daha güvenilir tahmin için en az 4–8 haftalık veri önerilir."
+            "Daha güvenilir tahmin için en az 4–8 haftalık veri önerilir.")
 
