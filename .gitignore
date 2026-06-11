@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.env
+.venv/
+venv/
+.idea/
+.vscode/
+*.log
+output/
+data_info.json
+BesiktasDashboard_Mudur.zip
