@@ -36,6 +36,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ---------- CSS ----------
 st.markdown(
     """
     <style>
@@ -68,28 +69,44 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
+# ---------- Yardımcı ----------
 def bulgu_karti(b: dict) -> None:
     st.markdown(f"#### {b['baslik']}")
     st.markdown(f'<div class="ozet-kutu"><b>Bulgumuz:</b> {b["bulgu"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>{b["anlam"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="oneri-kutu"><b>Operasyonel öneri:</b> {b["oneri"]}</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="anlam-kutu"><b>Bu ne anlama geliyor?</b><br>{b["anlam"]}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div class="oneri-kutu"><b>Operasyonel öneri:</b> {b["oneri"]}</div>',
+        unsafe_allow_html=True,
+    )
     st.markdown("")
 
 
+# ---------- Veri Yükleme ----------
 @st.cache_data(show_spinner="Veri yükleniyor...")
 def get_data():
     try:
-        return load_data()
+        df = load_data()
+        return df
     except Exception as e:
         st.error(f"Veri yüklenirken hata oluştu: {e}")
         st.stop()
 
+# Teşhis: Uygulamanın başladığını göster
+st.write("✅ **Uygulama başlatıldı**")
 
-df = get_data()
+try:
+    df = get_data()
+    st.success(f"📦 Veri yüklendi – Boyut: {df.shape[0]} satır, {df.shape[1]} sütun")
+except Exception as e:
+    st.error(f"Veri yükleme başarısız: {e}")
+    st.stop()
+
 ozet = veri_ozeti(df)
 
-# --- Sidebar ---
+# ---------- Sidebar ----------
 st.sidebar.markdown("## ⛴️ Menü")
 sayfa = st.sidebar.radio(
     "Sayfa seçin",
@@ -114,12 +131,17 @@ st.sidebar.metric("Toplam Kayıt", f"{ozet['toplam_kayit']:,}")
 st.sidebar.metric("Analiz Günü", ozet["tarih_baslangic"])
 st.sidebar.caption(f"Beşiktaş→Üsküdar: {ozet['bes_usk']:,} | Üsküdar→Beşiktaş: {ozet['usk_bes']:,}")
 
-# --- Sayfalar ---
+# Sayfa ismini göster (hangi sayfada olduğumuzu anlamak için)
+st.write(f"📍 **Aktif sayfa:** {sayfa}")
+
+# ---------- Sayfa İçerikleri ----------
 try:
     if sayfa == "📋 Yönetici Brifingi":
         st.markdown('<p class="main-title">Yönetici Brifingi — Öne Çıkan Bulgular</p>', unsafe_allow_html=True)
         st.markdown('<p class="sub-title">Her bulgu: veri → ne anlama geliyor → ne yapılmalı</p>', unsafe_allow_html=True)
-        for b in yonetici_bulgular(df):
+        bulgular = yonetici_bulgular(df)
+        st.write(f"🔎 {len(bulgular)} bulgu listelenecek")
+        for b in bulgular:
             bulgu_karti(b)
 
     elif sayfa == "🏠 Genel Özet":
@@ -137,13 +159,25 @@ try:
 
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                st.markdown(f'<div class="kpi-box"><h2>{int(bes_peak["saat"]):02d}:00</h2><p>Beşiktaş pik saati</p></div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="kpi-box"><h2>{int(bes_peak["saat"]):02d}:00</h2><p>Beşiktaş pik saati</p></div>',
+                    unsafe_allow_html=True,
+                )
             with c2:
-                st.markdown(f'<div class="kpi-box"><h2>{int(bes_peak["yolcu"]):,}</h2><p>Beşiktaş pik yolcu</p></div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="kpi-box"><h2>{int(bes_peak["yolcu"]):,}</h2><p>Beşiktaş pik yolcu</p></div>',
+                    unsafe_allow_html=True,
+                )
             with c3:
-                st.markdown(f'<div class="kpi-box"><h2>{int(usk_peak["saat"]):02d}:00</h2><p>Üsküdar pik saati</p></div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="kpi-box"><h2>{int(usk_peak["saat"]):02d}:00</h2><p>Üsküdar pik saati</p></div>',
+                    unsafe_allow_html=True,
+                )
             with c4:
-                st.markdown(f'<div class="kpi-box"><h2>{int(usk_peak["yolcu"]):,}</h2><p>Üsküdar pik yolcu</p></div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="kpi-box"><h2>{int(usk_peak["yolcu"]):,}</h2><p>Üsküdar pik yolcu</p></div>',
+                    unsafe_allow_html=True,
+                )
 
             st.markdown("### Yönetici Özet Bulguları")
             bes_kaynak_df = kaynak_hatlar(df, YON_USK_BES, 1)
