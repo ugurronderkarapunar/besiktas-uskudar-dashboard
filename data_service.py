@@ -510,5 +510,3 @@ def yonetici_bulgular(df: pd.DataFrame) -> list[dict]:
         ),
         "oneri": "4–8 haftalık veriyle hafta içi/sonu ve mevsimsel planlama yapılabilir.",
     })
-
-    return bulgular
